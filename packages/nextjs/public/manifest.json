@@ -1,0 +1,8 @@
+{
+  "name": "LeftClaw Portfolio Explorer",
+  "short_name": "Portfolio Explorer",
+  "description": "See what any wallet has built with LeftClaw.",
+  "icons": [
+    { "src": "/favicon.svg", "type": "image/svg+xml", "sizes": "any" }
+  ]
+}

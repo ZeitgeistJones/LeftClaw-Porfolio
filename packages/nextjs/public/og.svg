@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0e0e11"/>
+      <stop offset="100%" stop-color="#08080a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#dc2626"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect x="60" y="60" width="80" height="80" rx="18" fill="url(#accent)"/>
+  <text x="100" y="120" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-weight="700" font-size="48" fill="#ffffff">P</text>
+  <text x="60" y="320" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-weight="700" font-size="76" fill="#fafafa" letter-spacing="-2">LeftClaw Portfolio</text>
+  <text x="60" y="400" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-weight="700" font-size="76" fill="#fafafa" letter-spacing="-2">Explorer</text>
+  <text x="60" y="490" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-weight="400" font-size="32" fill="#a1a1aa">See what any wallet has built with LeftClaw.</text>
+  <text x="60" y="570" font-family="-apple-system,BlinkMacSystemFont,sans-serif" font-weight="500" font-size="22" fill="#f97316">leftclaw.services · base mainnet</text>
+</svg>

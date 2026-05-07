@@ -1,0 +1,36 @@
+# dependencies
+node_modules
+
+# yarn
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# eslint
+.eslintcache
+
+# misc
+.DS_Store
+
+# IDE
+.vscode
+.idea
+
+# cli
+dist
+
+# env files (never commit)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# bgipfs upload config (contains API key)
+ipfs-upload.config.json
+
+# nextjs static export output
+packages/nextjs/out
