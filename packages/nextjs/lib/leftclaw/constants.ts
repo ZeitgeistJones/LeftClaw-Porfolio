@@ -46,6 +46,11 @@ export const PAYMENT_METHOD_LABEL: Record<number, string> = {
   3: "CV",
 };
 
+// Service type IDs that are never shown in the portfolio view.
+// Consultations contain private conversation content — showing them would
+// let anyone use this explorer as a workaround to read private job details.
+export const HIDDEN_SERVICE_TYPE_IDS = new Set([1, 2]);
+
 // Default service-type fallback names used if `getAllServiceTypes` hasn't
 // loaded yet — matches the on-chain defaults (V2 contract).
 export const DEFAULT_SERVICE_TYPES: Record<number, string> = {

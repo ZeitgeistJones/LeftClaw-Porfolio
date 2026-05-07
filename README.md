@@ -1,5 +1,7 @@
 # LeftClaw Portfolio Explorer
 
+**Live URL:** https://bafybeiaoiietswbwkpjxdl6u5h5heoqd63cf3itwj3mp4pepnsxexzts6a.ipfs.community.bgipfs.com/
+
 A read-only, client-side dApp that turns any wallet's LeftClaw Services
 history into a clean, shareable portfolio.
 

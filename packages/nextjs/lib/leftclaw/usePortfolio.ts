@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { CONTRACTS, LEFTCLAW_ABI } from "./constants";
+import { CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
 import type { EnrichedJob, Job } from "./types";
 import { useReadContracts } from "wagmi";
 
@@ -69,6 +69,7 @@ export function usePortfolio(address: `0x${string}` | undefined) {
       const job = res.result as unknown as Job;
       const ref = jobRefs[i];
       const contractMeta = CONTRACTS[ref.contractIdx];
+      if (HIDDEN_SERVICE_TYPE_IDS.has(Number(job.serviceTypeId))) return;
       out.push({
         ...job,
         contractAddress: contractMeta.address,

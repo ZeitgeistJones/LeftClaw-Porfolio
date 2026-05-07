@@ -39,7 +39,7 @@ export const JobCard = ({
   // see a fresh array on every render (which would re-attach the
   // IntersectionObserver and cause the summary skeleton to flash).
   const summaryWorkLogs = useMemo(() => (workLogs ? [...workLogs] : []), [workLogs]);
-  const { summary, loading: summaryLoading, error: summaryError, ref: summaryRef } = useSummary(job, summaryWorkLogs);
+  const { summary, loading: summaryLoading, ref: summaryRef } = useSummary(job, summaryWorkLogs);
 
   const isCancelled = job.status === 3 || job.status === 4;
   const isCompleted = job.status === 2;
@@ -78,17 +78,7 @@ export const JobCard = ({
             <div className="skeleton-line h-3 w-3/5" />
           </div>
         ) : (
-          <p className="text-sm leading-relaxed text-base-content/65 my-0">
-            {fallbackText}
-            {summaryError && (
-              <span
-                className="ml-1.5 text-[10px] opacity-30 align-middle"
-                title="AI summary unavailable — showing raw description"
-              >
-                ⊘ summary unavailable
-              </span>
-            )}
-          </p>
+          <p className="text-sm leading-relaxed text-base-content/65 my-0">{fallbackText}</p>
         )}
       </div>
 
