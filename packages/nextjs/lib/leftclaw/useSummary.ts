@@ -4,20 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { SUMMARY_API_URL } from "./constants";
 import type { EnrichedJob, WorkLog } from "./types";
 
-/**
- * Generate a clean one-line extract from a raw job description.
- * Used as a local fallback when the remote AI summary endpoint is unavailable.
- */
-function extractSummary(description: string): string {
-  const clean = description.replace(/^�/, "").replace(/\s+/g, " ").trim();
-  if (!clean) return "(no description)";
-  const firstLine = clean.split(/\n/)[0].trim();
-  if (firstLine.length <= 140) return firstLine;
-  const truncated = firstLine.slice(0, 140);
-  const lastSpace = truncated.lastIndexOf(" ");
-  return (lastSpace > 60 ? truncated.slice(0, lastSpace) : truncated) + "…";
-}
-
 /** In-memory cache keyed by `contract:jobId` so re-renders don't refetch. */
 const summaryCache = new Map<string, string>();
 const inflight = new Map<string, Promise<string | null>>();
@@ -129,9 +115,12 @@ export function useSummary(job: EnrichedJob, workLogs: WorkLog[] | undefined) {
               }
               inflight.delete(key);
               if (cancelled) return;
-              const resolved = result ?? extractSummary(job.description);
-              setSummary(resolved);
-              setError(false);
+              if (result) {
+                setSummary(result);
+                setError(false);
+              } else {
+                setError(true);
+              }
               setLoading(false);
             })();
             return;

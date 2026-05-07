@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ServiceBadge } from "./ServiceBadge";
 import { JOB_STATUS_LABEL, PAYMENT_METHOD_LABEL } from "~~/lib/leftclaw/constants";
-import { formatAbsoluteDate, formatRelativeTime, formatUsd, resolveResultUrl, truncate } from "~~/lib/leftclaw/format";
+import { formatAbsoluteDate, formatRelativeTime, formatUsd, resolveResultUrl } from "~~/lib/leftclaw/format";
 import type { EnrichedJob, ServiceType } from "~~/lib/leftclaw/types";
 import { useSummary } from "~~/lib/leftclaw/useSummary";
 import { useWorkLogs } from "~~/lib/leftclaw/useWorkLogs";
@@ -31,20 +31,13 @@ export const JobCard = ({
   index: number;
 }) => {
   const [open, setOpen] = useState(false);
-  // Only fetch work logs once expanded — but we also feed (empty) work logs
-  // to the summary fetcher so the card can describe the job from chain data
-  // alone if the summary call fails.
   const { workLogs } = useWorkLogs(job, open);
-  // Stabilize the workLogs array reference so useSummary's effect deps don't
-  // see a fresh array on every render (which would re-attach the
-  // IntersectionObserver and cause the summary skeleton to flash).
   const summaryWorkLogs = useMemo(() => (workLogs ? [...workLogs] : []), [workLogs]);
   const { summary, loading: summaryLoading, ref: summaryRef } = useSummary(job, summaryWorkLogs);
 
   const isCancelled = job.status === 3 || job.status === 4;
   const isCompleted = job.status === 2;
   const resultUrl = resolveResultUrl(job.resultCID);
-  const fallbackText = truncate(job.description.replace(/\n+/g, " "), 160);
 
   return (
     <div
@@ -68,7 +61,7 @@ export const JobCard = ({
         </div>
       </div>
 
-      {/* Summary line */}
+      {/* Summary line — AI-generated only; no raw description shown */}
       <div className="mt-3 min-h-[1.5rem]">
         {summary ? (
           <p className="text-sm leading-relaxed text-base-content/85 my-0">{summary}</p>
@@ -77,9 +70,7 @@ export const JobCard = ({
             <div className="skeleton-line h-3 w-11/12" />
             <div className="skeleton-line h-3 w-3/5" />
           </div>
-        ) : (
-          <p className="text-sm leading-relaxed text-base-content/65 my-0">{fallbackText}</p>
-        )}
+        ) : null}
       </div>
 
       {/* Footer row */}
@@ -130,13 +121,8 @@ const ExpandedSection = ({
         show ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1"
       }`}
     >
-      <h4 className="text-[11px] uppercase tracking-wider text-base-content/50 mb-2">Original request</h4>
-      <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-base-content/85 bg-base-200/50 rounded-lg p-3 border border-base-300/40 my-0">
-        {job.description || "(empty description)"}
-      </pre>
-
       {workLogs.length > 0 && (
-        <div className="mt-5">
+        <div>
           <h4 className="text-[11px] uppercase tracking-wider text-base-content/50 mb-3">Work timeline</h4>
           <ol className="relative pl-5 my-0">
             <span className="absolute left-1.5 top-1.5 bottom-1.5 w-px bg-base-300" aria-hidden />
