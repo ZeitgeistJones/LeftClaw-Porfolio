@@ -29,9 +29,6 @@ export const wagmiConfig = createConfig({
     const rpcOverrideUrl = (scaffoldConfig.rpcOverrides as ScaffoldConfig["rpcOverrides"])?.[chain.id];
     if (rpcOverrideUrl) {
       rpcFallbacks = [http(rpcOverrideUrl), ...rpcFallbacks];
-      if (chain.id === base.id) {
-        rpcFallbacks = [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
-      }
     } else {
       const alchemyHttpUrl = getAlchemyHttpUrl(chain.id);
       if (alchemyHttpUrl) {
@@ -40,9 +37,12 @@ export const wagmiConfig = createConfig({
           ? [...rpcFallbacks, http(alchemyHttpUrl)]
           : [http(alchemyHttpUrl), ...rpcFallbacks];
       }
-      if (chain.id === base.id) {
-        rpcFallbacks = [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
-      }
+    }
+
+    // Public Base backstop — shared Alchemy keys often 403; without this,
+    // ecosystem stats stay on skeletons forever.
+    if (chain.id === base.id) {
+      rpcFallbacks = [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
     }
 
     return createClient({
