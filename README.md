@@ -1,6 +1,6 @@
 # LeftClaw Portfolio Explorer
 
-**Live URL:** https://bafybeienj2tcdgjrmkkcbcoaq336du4azvwx4xx4arfj3bvrwtkxpov4dm.ipfs.community.bgipfs.com/
+**Live URL:** https://bafybeihd5quz4rxekpnvw5fqe3674q7llktx2dbr3grsadnznjhblogqlq.ipfs.community.bgipfs.com/
 
 A read-only, client-side dApp that turns any wallet's LeftClaw Services
 history into a clean, shareable portfolio.
@@ -12,7 +12,8 @@ history into a clean, shareable portfolio.
 on top of the original Job #94 build. See `CHANGES.md` for the diff
 summary and `DEPLOYMENT.md` for the live URL of this iteration.
 
-**Live (Job #102):** https://bafybeihd5quz4rxekpnvw5fqe3674q7llktx2dbr3grsadnznjhblogqlq.ipfs.community.bgipfs.com/
+**Live (Job #102, preferred):** https://bafybeihd5quz4rxekpnvw5fqe3674q7llktx2dbr3grsadnznjhblogqlq.ipfs.community.bgipfs.com/
+**Broken (Job #104):** https://bafybeienj2tcdgjrmkkcbcoaq336du4azvwx4xx4arfj3bvrwtkxpov4dm.ipfs.community.bgipfs.com/ — ecosystem stats never leave skeletons
 **Live (Job #94, original):** https://bafybeihx3qrfhbgfatrpydr7zsynxwhnceokc22zbbs6tgmx2sbszievyi.ipfs.community.bgipfs.com/
 
 ## What it does
