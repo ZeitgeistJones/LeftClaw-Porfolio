@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
 import type { Job, ServiceType, WalletLeaderboardEntry } from "./types";
-import { useReadContracts } from "wagmi";
 import { getAddress } from "viem";
+import { useReadContracts } from "wagmi";
 
 /**
  * Aggregate ecosystem-wide stats:
@@ -140,7 +140,7 @@ export function useEcosystem() {
         if (activity > existing.lastActivity) existing.lastActivity = activity;
       } else {
         byClient.set(key, {
-          address: getAddress(job.client),
+          address: getAddress(job.client) as `0x${string}`,
           jobCount: 1,
           lastActivity: activity,
         });
