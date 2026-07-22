@@ -36,7 +36,7 @@ export const EcosystemStats = ({
     <section className="border-y border-base-300/50 bg-base-100/50">
       <div className="max-w-4xl mx-auto px-6 py-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Stat label="Jobs shipped" value={totalJobs > 0 ? totalJobs.toString() : null} ready={totalJobs > 0} />
-        <Stat label="Unique wallets" value={uniqueWallets > 0 ? uniqueWallets.toString() : null} ready={ready} />
+        <Stat label="Unique wallets" value={ready ? String(uniqueWallets) : null} ready={ready} />
         <Stat
           label="Builds"
           value={

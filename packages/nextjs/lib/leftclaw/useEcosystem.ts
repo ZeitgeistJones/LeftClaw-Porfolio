@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
+import { BASE_CHAIN_ID, CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
 import type { Job, ServiceType, WalletLeaderboardEntry } from "./types";
 import { getAddress } from "viem";
 import { useReadContracts } from "wagmi";
@@ -24,11 +24,13 @@ export function useEcosystem() {
         address: c.address,
         abi: LEFTCLAW_ABI,
         functionName: "getTotalJobs" as const,
+        chainId: BASE_CHAIN_ID,
       })),
       {
         address: CONTRACTS[0].address, // service types live on V2 (current)
         abi: LEFTCLAW_ABI,
         functionName: "getAllServiceTypes" as const,
+        chainId: BASE_CHAIN_ID,
       },
     ],
     query: { staleTime: 5 * 60_000 },
@@ -46,6 +48,12 @@ export function useEcosystem() {
       };
     });
   }, [meta.data]);
+
+  const stage1Failed =
+    Boolean(meta.isFetched) &&
+    Boolean(meta.data) &&
+    !meta.isError &&
+    meta.data!.slice(0, CONTRACTS.length).every(r => r.status !== "success");
 
   const serviceTypes = useMemo<ServiceType[]>(() => {
     if (!meta.data) return [];
@@ -66,6 +74,7 @@ export function useEcosystem() {
             abi: LEFTCLAW_ABI,
             functionName: "getJobsByStatus" as const,
             args: [status] as const,
+            chainId: BASE_CHAIN_ID,
           })),
         )
       : [],
@@ -98,6 +107,7 @@ export function useEcosystem() {
       abi: LEFTCLAW_ABI,
       functionName: "getJob" as const,
       args: [ref.id] as const,
+      chainId: BASE_CHAIN_ID,
     })),
     query: { enabled: allJobRefs.length > 0, staleTime: 5 * 60_000 },
   });
@@ -114,10 +124,25 @@ export function useEcosystem() {
   useEffect(() => {
     if (!totalsByContract) return;
     const totalJobs = totalsByContract.reduce((acc, t) => acc + t.total, 0);
-    if (!jobsBatch.data || jobsBatch.data.length === 0) {
+
+    // Enumeration finished with zero job IDs — mark ready so secondary stats stop shimmering.
+    if (idLists.isFetched && allJobRefs.length === 0) {
+      setStats({
+        totalJobs,
+        uniqueWallets: 0,
+        serviceTypeCounts: {},
+        wallets: [],
+        ready: true,
+      });
+      return;
+    }
+
+    // Still waiting on job hydration.
+    if (!jobsBatch.isFetched || !jobsBatch.data) {
       setStats(s => ({ ...s, totalJobs }));
       return;
     }
+
     const wallets = new Set<string>();
     const counts: Record<number, number> = {};
     const byClient = new Map<string, WalletLeaderboardEntry>();
@@ -159,12 +184,14 @@ export function useEcosystem() {
       wallets: ranked,
       ready: true,
     });
-  }, [totalsByContract, jobsBatch.data]);
+  }, [totalsByContract, idLists.isFetched, allJobRefs.length, jobsBatch.isFetched, jobsBatch.data]);
+
+  const metaError = meta.error || (stage1Failed ? new Error("Failed to read job totals from LeftClaw contracts") : null);
 
   return {
     ...stats,
     serviceTypes,
     isLoading: meta.isLoading || idLists.isLoading || jobsBatch.isLoading,
-    error: meta.error || idLists.error || jobsBatch.error,
+    error: metaError || idLists.error || jobsBatch.error,
   };
 }

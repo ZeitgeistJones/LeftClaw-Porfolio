@@ -1,11 +1,13 @@
 import { wagmiConnectors } from "./wagmiConnectors";
 import { Chain, createClient, fallback, http } from "viem";
-import { hardhat, mainnet } from "viem/chains";
+import { base, hardhat, mainnet } from "viem/chains";
 import { createConfig } from "wagmi";
 import scaffoldConfig, { DEFAULT_ALCHEMY_API_KEY, ScaffoldConfig } from "~~/scaffold.config";
 import { getAlchemyHttpUrl } from "~~/utils/scaffold-eth";
 
 const { targetNetworks } = scaffoldConfig;
+
+const BASE_PUBLIC_RPC = "https://mainnet.base.org";
 
 // We always want to have mainnet enabled (ENS resolution, ETH price, etc). But only once.
 export const enabledChains = targetNetworks.find((network: Chain) => network.id === 1)
@@ -18,9 +20,8 @@ export const wagmiConfig = createConfig({
   ssr: true,
   client: ({ chain }) => {
     // Mainnet always gets the BuidlGuidl public RPC as a backstop for ENS /
-    // ETH-price lookups. Other chains never get a bare `http()` (which would
-    // default to the chain's public RPC) — we want Alchemy first, no public
-    // fallback. See QA report SF-6.
+    // ETH-price lookups. Base also gets mainnet.base.org after Alchemy so a
+    // dead/rate-limited Alchemy key (403) does not freeze ecosystem reads.
     const mainnetFallbackWithDefaultRPC = chain.id === mainnet.id ? [http("https://mainnet.rpc.buidlguidl.com")] : [];
 
     let rpcFallbacks: ReturnType<typeof http>[] = [...mainnetFallbackWithDefaultRPC];
@@ -28,6 +29,9 @@ export const wagmiConfig = createConfig({
     const rpcOverrideUrl = (scaffoldConfig.rpcOverrides as ScaffoldConfig["rpcOverrides"])?.[chain.id];
     if (rpcOverrideUrl) {
       rpcFallbacks = [http(rpcOverrideUrl), ...rpcFallbacks];
+      if (chain.id === base.id) {
+        rpcFallbacks = [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
+      }
     } else {
       const alchemyHttpUrl = getAlchemyHttpUrl(chain.id);
       if (alchemyHttpUrl) {
@@ -35,6 +39,9 @@ export const wagmiConfig = createConfig({
         rpcFallbacks = isUsingDefaultKey
           ? [...rpcFallbacks, http(alchemyHttpUrl)]
           : [http(alchemyHttpUrl), ...rpcFallbacks];
+      }
+      if (chain.id === base.id) {
+        rpcFallbacks = [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
       }
     }
 
