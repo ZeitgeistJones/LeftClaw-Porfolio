@@ -1,11 +1,25 @@
 "use client";
 
 import { DEFAULT_SERVICE_TYPES } from "~~/lib/leftclaw/constants";
-import { useEcosystem } from "~~/lib/leftclaw/useEcosystem";
+import type { ServiceType } from "~~/lib/leftclaw/types";
 
-export const EcosystemStats = () => {
-  const { totalJobs, uniqueWallets, serviceTypeCounts, serviceTypes, ready, error } = useEcosystem();
+type EcosystemStatsProps = {
+  totalJobs: number;
+  uniqueWallets: number;
+  serviceTypeCounts: Record<number, number>;
+  serviceTypes: ServiceType[];
+  ready: boolean;
+  error: Error | null;
+};
 
+export const EcosystemStats = ({
+  totalJobs,
+  uniqueWallets,
+  serviceTypeCounts,
+  serviceTypes,
+  ready,
+  error,
+}: EcosystemStatsProps) => {
   // RPC failure: render a quiet error message in place of the spinning
   // skeletons so the section doesn't shimmer forever.
   if (error) {

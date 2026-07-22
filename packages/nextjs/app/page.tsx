@@ -7,6 +7,8 @@ import { EcosystemStats } from "~~/components/portfolio/EcosystemStats";
 import { Hero } from "~~/components/portfolio/Hero";
 import { HowItWorks } from "~~/components/portfolio/HowItWorks";
 import { PortfolioView } from "~~/components/portfolio/PortfolioView";
+import { WalletLeaderboard } from "~~/components/portfolio/WalletLeaderboard";
+import { useEcosystem } from "~~/lib/leftclaw/useEcosystem";
 
 /**
  * Root page — renders either the landing/hero (no ?wallet= param) or the
@@ -56,10 +58,25 @@ const Home: NextPage = () => {
     return <PortfolioView address={walletParam} onBack={back} />;
   }
 
+  return <HomeLanding onExplore={explore} />;
+};
+
+/** Landing-only shell so the ecosystem scan mounts once and unmounts on portfolio view. */
+const HomeLanding = ({ onExplore }: { onExplore: (address: `0x${string}`) => void }) => {
+  const { totalJobs, uniqueWallets, serviceTypeCounts, serviceTypes, wallets, ready, error } = useEcosystem();
+
   return (
     <>
-      <Hero onExplore={explore} />
-      <EcosystemStats />
+      <Hero onExplore={onExplore} />
+      <EcosystemStats
+        totalJobs={totalJobs}
+        uniqueWallets={uniqueWallets}
+        serviceTypeCounts={serviceTypeCounts}
+        serviceTypes={serviceTypes}
+        ready={ready}
+        error={error}
+      />
+      <WalletLeaderboard wallets={wallets} ready={ready} error={error} onExplore={onExplore} />
       <HowItWorks />
     </>
   );

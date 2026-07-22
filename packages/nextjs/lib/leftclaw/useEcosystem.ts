@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CONTRACTS, LEFTCLAW_ABI } from "./constants";
-import type { Job, ServiceType } from "./types";
+import { CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
+import type { Job, ServiceType, WalletLeaderboardEntry } from "./types";
 import { useReadContracts } from "wagmi";
+import { getAddress } from "viem";
 
 /**
  * Aggregate ecosystem-wide stats:
  *   - total jobs across V1 + V2
  *   - unique client wallets
  *   - service-type counts
+ *   - ranked client leaderboard (visible jobs only)
  *
  * Lazy: total job counts fetch first (cheap) and the heavy per-job hydration
  * is queued in batches so the hero can render while stats fill in.
@@ -105,6 +107,7 @@ export function useEcosystem() {
     totalJobs: 0,
     uniqueWallets: 0,
     serviceTypeCounts: {} as Record<number, number>,
+    wallets: [] as WalletLeaderboardEntry[],
     ready: false,
   });
 
@@ -117,17 +120,43 @@ export function useEcosystem() {
     }
     const wallets = new Set<string>();
     const counts: Record<number, number> = {};
+    const byClient = new Map<string, WalletLeaderboardEntry>();
+
     for (const r of jobsBatch.data) {
       if (r.status !== "success" || !r.result) continue;
       const job = r.result as unknown as Job;
       wallets.add(job.client.toLowerCase());
       const svcId = Number(job.serviceTypeId);
       counts[svcId] = (counts[svcId] ?? 0) + 1;
+
+      // Leaderboard only counts visible jobs (same privacy filter as portfolio).
+      if (HIDDEN_SERVICE_TYPE_IDS.has(svcId)) continue;
+
+      const key = job.client.toLowerCase();
+      const activity = Math.max(Number(job.createdAt), Number(job.startedAt), Number(job.completedAt));
+      const existing = byClient.get(key);
+      if (existing) {
+        existing.jobCount += 1;
+        if (activity > existing.lastActivity) existing.lastActivity = activity;
+      } else {
+        byClient.set(key, {
+          address: getAddress(job.client),
+          jobCount: 1,
+          lastActivity: activity,
+        });
+      }
     }
+
+    const ranked = Array.from(byClient.values()).sort((a, b) => {
+      if (b.jobCount !== a.jobCount) return b.jobCount - a.jobCount;
+      return b.lastActivity - a.lastActivity;
+    });
+
     setStats({
       totalJobs,
       uniqueWallets: wallets.size,
       serviceTypeCounts: counts,
+      wallets: ranked,
       ready: true,
     });
   }, [totalsByContract, jobsBatch.data]);

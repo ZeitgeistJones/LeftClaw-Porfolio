@@ -45,3 +45,10 @@ export type EnrichedJob = Job & {
   contractAddress: `0x${string}`;
   contractLabel: "V1" | "V2";
 };
+
+/** Client wallet ranked by visible (non-consult) job activity. */
+export type WalletLeaderboardEntry = {
+  address: `0x${string}`;
+  jobCount: number;
+  lastActivity: number;
+};
