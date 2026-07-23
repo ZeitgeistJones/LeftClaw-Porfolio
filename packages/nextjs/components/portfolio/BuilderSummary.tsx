@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { Address } from "@scaffold-ui/components";
 import { useCopyToClipboard } from "usehooks-ts";
 import { base } from "viem/chains";
-import { DEFAULT_SERVICE_TYPES } from "~~/lib/leftclaw/constants";
 import { formatAbsoluteDate, formatClawd } from "~~/lib/leftclaw/format";
+import { resolveServiceName, serviceBucket } from "~~/lib/leftclaw/serviceBucket";
 import type { EnrichedJob, ServiceType } from "~~/lib/leftclaw/types";
 import { notification } from "~~/utils/scaffold-eth";
 
@@ -58,10 +58,7 @@ export const BuilderSummary = ({
     let completed = 0;
     let active = 0;
     for (const j of jobs) {
-      const typeName =
-        serviceTypes.find(s => Number(s.id) === Number(j.serviceTypeId))?.name ??
-        DEFAULT_SERVICE_TYPES[Number(j.serviceTypeId)] ??
-        `Type ${j.serviceTypeId}`;
+      const typeName = resolveServiceName(j.serviceTypeId, serviceTypes);
       byTypeName[typeName] = (byTypeName[typeName] ?? 0) + 1;
       totalClawd += j.paymentClawd;
       if (firstAt === 0n || j.createdAt < firstAt) firstAt = j.createdAt;
@@ -81,14 +78,18 @@ export const BuilderSummary = ({
   }, [jobs, serviceTypes]);
 
   const characterization = characterize(stats.byTypeName);
-  // Use case-insensitive substring match so "Contract Audit" + "Frontend QA Audit"
-  // both contribute to auditCount, and any future on-chain rename of "Build"
-  // continues to count as a build.
-  const sumWhere = (predicate: (lower: string) => boolean) =>
-    Object.entries(stats.byTypeName).reduce((acc, [name, n]) => (predicate(name.toLowerCase()) ? acc + n : acc), 0);
-  const buildCount = sumWhere(lower => lower.includes("build"));
-  const auditCount = sumWhere(lower => lower.includes("audit"));
-  const consultCount = sumWhere(lower => lower.includes("consult"));
+  const buildCount = Object.entries(stats.byTypeName).reduce(
+    (acc, [name, n]) => (serviceBucket(name) === "builds" ? acc + n : acc),
+    0,
+  );
+  const auditCount = Object.entries(stats.byTypeName).reduce(
+    (acc, [name, n]) => (serviceBucket(name) === "audits" ? acc + n : acc),
+    0,
+  );
+  const consultCount = Object.entries(stats.byTypeName).reduce(
+    (acc, [name, n]) => (name.toLowerCase().includes("consult") ? acc + n : acc),
+    0,
+  );
 
   const handleCopyAddr = async () => {
     await copy(address);

@@ -1,6 +1,7 @@
 "use client";
 
-import { DEFAULT_SERVICE_TYPES } from "~~/lib/leftclaw/constants";
+import { useMemo } from "react";
+import { resolveServiceName, serviceBucket } from "~~/lib/leftclaw/serviceBucket";
 import type { ServiceType } from "~~/lib/leftclaw/types";
 
 type EcosystemStatsProps = {
@@ -10,6 +11,7 @@ type EcosystemStatsProps = {
   serviceTypes: ServiceType[];
   ready: boolean;
   error: Error | null;
+  onBrowse?: (view: "builds" | "audits") => void;
 };
 
 export const EcosystemStats = ({
@@ -19,9 +21,19 @@ export const EcosystemStats = ({
   serviceTypes,
   ready,
   error,
+  onBrowse,
 }: EcosystemStatsProps) => {
-  // RPC failure: render a quiet error message in place of the spinning
-  // skeletons so the section doesn't shimmer forever.
+  const { builds, audits } = useMemo(() => {
+    let buildsCount = 0;
+    let auditsCount = 0;
+    for (const [id, n] of Object.entries(serviceTypeCounts)) {
+      const bucket = serviceBucket(resolveServiceName(Number(id), serviceTypes));
+      if (bucket === "builds") buildsCount += n;
+      else if (bucket === "audits") auditsCount += n;
+    }
+    return { builds: buildsCount, audits: auditsCount };
+  }, [serviceTypeCounts, serviceTypes]);
+
   if (error) {
     return (
       <section className="border-y border-base-300/50 bg-base-100/50">
@@ -39,54 +51,61 @@ export const EcosystemStats = ({
         <Stat label="Unique wallets" value={ready ? String(uniqueWallets) : null} ready={ready} />
         <Stat
           label="Builds"
-          value={
-            ready
-              ? String(
-                  Object.entries(serviceTypeCounts).reduce((acc, [id, n]) => {
-                    const numId = Number(id);
-                    const name = (
-                      serviceTypes.find(s => Number(s.id) === numId)?.name ??
-                      DEFAULT_SERVICE_TYPES[numId] ??
-                      ""
-                    ).toLowerCase();
-                    // Build + Feature (and any on-chain name containing those words).
-                    return name.includes("build") || name.includes("feature") ? acc + n : acc;
-                  }, 0),
-                )
-              : null
-          }
+          value={ready ? String(builds) : null}
           ready={ready}
+          onClick={ready && onBrowse ? () => onBrowse("builds") : undefined}
+          hint={ready && onBrowse ? "Browse builds" : undefined}
         />
         <Stat
           label="Audits"
-          value={
-            ready
-              ? String(
-                  Object.entries(serviceTypeCounts).reduce((acc, [id, n]) => {
-                    const numId = Number(id);
-                    const name = (
-                      serviceTypes.find(s => Number(s.id) === numId)?.name ??
-                      DEFAULT_SERVICE_TYPES[numId] ??
-                      ""
-                    ).toLowerCase();
-                    // Contract/Frontend audits + HumanQA.
-                    return name.includes("audit") || name.includes("humanqa") || name.includes("qa") ? acc + n : acc;
-                  }, 0),
-                )
-              : null
-          }
+          value={ready ? String(audits) : null}
           ready={ready}
+          onClick={ready && onBrowse ? () => onBrowse("audits") : undefined}
+          hint={ready && onBrowse ? "Browse audits" : undefined}
         />
       </div>
     </section>
   );
 };
 
-const Stat = ({ label, value, ready }: { label: string; value: string | null; ready: boolean }) => (
-  <div className="text-center">
-    <div className="text-[10px] uppercase tracking-wider text-base-content/45">{label}</div>
-    <div className="mt-1 text-2xl font-semibold tabular-nums">
-      {ready && value !== null ? value : <span className="inline-block skeleton-line w-10 h-6" />}
-    </div>
-  </div>
-);
+const Stat = ({
+  label,
+  value,
+  ready,
+  onClick,
+  hint,
+}: {
+  label: string;
+  value: string | null;
+  ready: boolean;
+  onClick?: () => void;
+  hint?: string;
+}) => {
+  const inner = (
+    <>
+      <div className="text-[10px] uppercase tracking-wider text-base-content/45">{label}</div>
+      <div className="mt-1 text-2xl font-semibold tabular-nums">
+        {ready && value !== null ? value : <span className="inline-block skeleton-line w-10 h-6" />}
+      </div>
+      {hint ? (
+        <div className="mt-1 text-[10px] text-base-content/40 opacity-0 group-hover:opacity-100 transition-opacity">
+          {hint}
+        </div>
+      ) : null}
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="group text-center rounded-lg px-2 py-1 -mx-2 -my-1 hover:bg-base-200/50 transition-colors cursor-pointer"
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return <div className="text-center">{inner}</div>;
+};
