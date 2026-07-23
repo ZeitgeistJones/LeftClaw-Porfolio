@@ -29,7 +29,7 @@ export const wagmiConfig = createConfig({
     // key (403) never freezes ecosystem stats. Alchemy is secondary only.
     if (chain.id === base.id) {
       const secondary: ReturnType<typeof http>[] = [];
-      const rpcOverrideUrl = (scaffoldConfig.rpcOverrides as ScaffoldConfig["rpcOverrides"])?.[chain.id];
+      const rpcOverrideUrl = (scaffoldConfig as ScaffoldConfig).rpcOverrides?.[chain.id];
       if (rpcOverrideUrl) {
         secondary.push(http(rpcOverrideUrl));
       } else {
@@ -38,7 +38,7 @@ export const wagmiConfig = createConfig({
       }
       rpcFallbacks = [http(BASE_PUBLIC_RPC), ...secondary];
     } else {
-      const rpcOverrideUrl = (scaffoldConfig.rpcOverrides as ScaffoldConfig["rpcOverrides"])?.[chain.id];
+      const rpcOverrideUrl = (scaffoldConfig as ScaffoldConfig).rpcOverrides?.[chain.id];
       if (rpcOverrideUrl) {
         rpcFallbacks = [http(rpcOverrideUrl), ...rpcFallbacks];
       } else {

@@ -70,9 +70,7 @@ export const EcosystemStats = ({
                       ""
                     ).toLowerCase();
                     // Contract/Frontend audits + HumanQA.
-                    return name.includes("audit") || name.includes("humanqa") || name.includes("qa")
-                      ? acc + n
-                      : acc;
+                    return name.includes("audit") || name.includes("humanqa") || name.includes("qa") ? acc + n : acc;
                   }, 0),
                 )
               : null
