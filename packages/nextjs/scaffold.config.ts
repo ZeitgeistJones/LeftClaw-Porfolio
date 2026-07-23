@@ -27,7 +27,8 @@ const scaffoldConfig = {
   // It's recommended to store it in an env variable:
   // .env.local for local testing, and in the Vercel/system env config for live apps.
   alchemyApiKey: ALCHEMY_API_KEY,
-  // Job #102 config: Base goes through Alchemy (same as the working IPFS build).
+  // Optional Alchemy secondary hop. wagmiConfig prefers mainnet.base.org first
+  // for Base — the shared default Alchemy key often 403s in the browser.
   rpcOverrides: {
     [chains.base.id]: `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
   },

@@ -1,21 +1,74 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPublicClient, fallback, http } from "viem";
+import { base } from "viem/chains";
 import { useReadContracts } from "wagmi";
 import { BASE_CHAIN_ID, CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
 import type { Job, ServiceType, WalletLeaderboardEntry } from "./types";
+import { getAlchemyHttpUrl } from "~~/utils/scaffold-eth";
+
+const JOB_HYDRATE_CHUNK = 15;
+const MAX_CHUNK_RETRIES = 3;
+
+type JobRef = { contractIdx: number; id: bigint };
 
 /**
- * Aggregate ecosystem-wide stats — same shape as Job #102 (the IPFS build
- * that reliably populated Unique wallets / Builds / Audits):
- *   1. getTotalJobs + getAllServiceTypes
- *   2. getJobsByStatus(0..5) × V1/V2
- *   3. getJob(id) for every ID via one wagmi useReadContracts multicall
- *
- * Also ranks client wallets for the home-page leaderboard (visible jobs only).
+ * Stages 1–2 match Job #102 (wagmi useReadContracts).
+ * Stage 3 chunks getJob — ~493 jobs in one multicall is too heavy and never
+ * flips `ready`. Uses a module-level Base client (public RPC first).
  */
+const alchemyUrl = getAlchemyHttpUrl(BASE_CHAIN_ID);
+const ecosystemClient = createPublicClient({
+  chain: base,
+  transport: fallback([
+    http("https://mainnet.base.org", { timeout: 25_000 }),
+    ...(alchemyUrl ? [http(alchemyUrl, { timeout: 25_000 })] : []),
+  ]),
+});
+
+function buildStats(jobs: Job[], totalJobs: number) {
+  const wallets = new Set<string>();
+  const counts: Record<number, number> = {};
+  const byClient = new Map<string, WalletLeaderboardEntry>();
+
+  for (const job of jobs) {
+    wallets.add(job.client.toLowerCase());
+    const svcId = Number(job.serviceTypeId);
+    counts[svcId] = (counts[svcId] ?? 0) + 1;
+
+    if (HIDDEN_SERVICE_TYPE_IDS.has(svcId)) continue;
+
+    const key = job.client.toLowerCase();
+    const activity = Math.max(Number(job.createdAt), Number(job.startedAt), Number(job.completedAt));
+    const existing = byClient.get(key);
+    if (existing) {
+      existing.jobCount += 1;
+      if (activity > existing.lastActivity) existing.lastActivity = activity;
+    } else {
+      byClient.set(key, {
+        address: job.client,
+        jobCount: 1,
+        lastActivity: activity,
+      });
+    }
+  }
+
+  const ranked = Array.from(byClient.values()).sort((a, b) => {
+    if (b.jobCount !== a.jobCount) return b.jobCount - a.jobCount;
+    return b.lastActivity - a.lastActivity;
+  });
+
+  return {
+    totalJobs,
+    uniqueWallets: wallets.size,
+    serviceTypeCounts: counts,
+    wallets: ranked,
+  };
+}
+
 export function useEcosystem() {
-  // Stage 1: getTotalJobs on each contract + getAllServiceTypes.
+  // Stage 1 — same as Job #102
   const meta = useReadContracts({
     contracts: [
       ...CONTRACTS.map(c => ({
@@ -25,7 +78,7 @@ export function useEcosystem() {
         chainId: BASE_CHAIN_ID,
       })),
       {
-        address: CONTRACTS[0].address, // service types live on V2 (current)
+        address: CONTRACTS[0].address,
         abi: LEFTCLAW_ABI,
         functionName: "getAllServiceTypes" as const,
         chainId: BASE_CHAIN_ID,
@@ -47,6 +100,11 @@ export function useEcosystem() {
     });
   }, [meta.data]);
 
+  const totalJobsFromMeta = useMemo(
+    () => (totalsByContract ? totalsByContract.reduce((acc, t) => acc + t.total, 0) : 0),
+    [totalsByContract],
+  );
+
   const serviceTypes = useMemo<ServiceType[]>(() => {
     if (!meta.data) return [];
     const r = meta.data[CONTRACTS.length];
@@ -54,7 +112,7 @@ export function useEcosystem() {
     return r.result as unknown as ServiceType[];
   }, [meta.data]);
 
-  // Stage 2: enumerate real job IDs (V2 IDs don't start at 1).
+  // Stage 2 — same as Job #102
   const idLists = useReadContracts({
     contracts: totalsByContract
       ? totalsByContract.flatMap(t =>
@@ -67,12 +125,12 @@ export function useEcosystem() {
           })),
         )
       : [],
-    query: { enabled: Boolean(totalsByContract), staleTime: 5 * 60_000 },
+    query: { enabled: Boolean(totalsByContract) && totalJobsFromMeta > 0, staleTime: 5 * 60_000 },
   });
 
   const allJobRefs = useMemo(() => {
-    if (!idLists.data || !totalsByContract) return [] as { contractIdx: number; id: bigint }[];
-    const refs: { contractIdx: number; id: bigint }[] = [];
+    if (!idLists.data || !totalsByContract) return [] as JobRef[];
+    const refs: JobRef[] = [];
     let i = 0;
     for (let cIdx = 0; cIdx < totalsByContract.length; cIdx++) {
       for (let s = 0; s < 6; s++) {
@@ -87,18 +145,6 @@ export function useEcosystem() {
     return refs;
   }, [idLists.data, totalsByContract]);
 
-  // Stage 3: hydrate every job in one wagmi multicall (Job #102 pattern).
-  const jobsBatch = useReadContracts({
-    contracts: allJobRefs.map(ref => ({
-      address: CONTRACTS[ref.contractIdx].address,
-      abi: LEFTCLAW_ABI,
-      functionName: "getJob" as const,
-      args: [ref.id] as const,
-      chainId: BASE_CHAIN_ID,
-    })),
-    query: { enabled: allJobRefs.length > 0, staleTime: 5 * 60_000 },
-  });
-
   const [stats, setStats] = useState({
     totalJobs: 0,
     uniqueWallets: 0,
@@ -106,61 +152,122 @@ export function useEcosystem() {
     wallets: [] as WalletLeaderboardEntry[],
     ready: false,
   });
+  const [hydrateLoading, setHydrateLoading] = useState(false);
+  const bestCountRef = useRef(0);
+  const runKeyRef = useRef("");
 
+  // Paint Jobs shipped as soon as totals land (Job #102 behavior).
   useEffect(() => {
-    if (!totalsByContract) return;
-    const totalJobs = totalsByContract.reduce((acc, t) => acc + t.total, 0);
-    if (!jobsBatch.data || jobsBatch.data.length === 0) {
-      setStats(s => ({ ...s, totalJobs }));
-      return;
-    }
+    if (totalJobsFromMeta <= 0) return;
+    setStats(s => ({ ...s, totalJobs: totalJobsFromMeta }));
+  }, [totalJobsFromMeta]);
 
-    const wallets = new Set<string>();
-    const counts: Record<number, number> = {};
-    const byClient = new Map<string, WalletLeaderboardEntry>();
-
-    for (const r of jobsBatch.data) {
-      if (r.status !== "success" || !r.result) continue;
-      const job = r.result as unknown as Job;
-      wallets.add(job.client.toLowerCase());
-      const svcId = Number(job.serviceTypeId);
-      counts[svcId] = (counts[svcId] ?? 0) + 1;
-
-      if (HIDDEN_SERVICE_TYPE_IDS.has(svcId)) continue;
-
-      const key = job.client.toLowerCase();
-      const activity = Math.max(Number(job.createdAt), Number(job.startedAt), Number(job.completedAt));
-      const existing = byClient.get(key);
-      if (existing) {
-        existing.jobCount += 1;
-        if (activity > existing.lastActivity) existing.lastActivity = activity;
-      } else {
-        byClient.set(key, {
-          address: job.client,
-          jobCount: 1,
-          lastActivity: activity,
-        });
-      }
-    }
-
-    const ranked = Array.from(byClient.values()).sort((a, b) => {
-      if (b.jobCount !== a.jobCount) return b.jobCount - a.jobCount;
-      return b.lastActivity - a.lastActivity;
-    });
-
-    setStats({
-      totalJobs,
-      uniqueWallets: wallets.size,
-      serviceTypeCounts: counts,
-      wallets: ranked,
+  // Status lists done but empty → stop skeletons.
+  useEffect(() => {
+    if (!idLists.isFetched || totalJobsFromMeta <= 0) return;
+    if (allJobRefs.length > 0) return;
+    setStats(s => ({
+      ...s,
+      totalJobs: totalJobsFromMeta,
+      uniqueWallets: 0,
+      serviceTypeCounts: {},
+      wallets: [],
       ready: true,
-    });
-  }, [totalsByContract, jobsBatch.data]);
+    }));
+  }, [idLists.isFetched, allJobRefs.length, totalJobsFromMeta]);
+
+  // Stage 3 — chunked getJob (Job #102 did one shot; we have ~5x more jobs now).
+  useEffect(() => {
+    if (allJobRefs.length === 0 || totalJobsFromMeta <= 0) return;
+
+    const runKey = `${totalJobsFromMeta}:${allJobRefs.length}`;
+    if (runKeyRef.current === runKey && bestCountRef.current > 0) return;
+    runKeyRef.current = runKey;
+
+    let cancelled = false;
+    setHydrateLoading(true);
+
+    const apply = (jobs: Job[]) => {
+      if (jobs.length < bestCountRef.current) return;
+      bestCountRef.current = jobs.length;
+      setStats({ ...buildStats(jobs, totalJobsFromMeta), ready: true });
+    };
+
+    const hydrateChunk = async (chunk: JobRef[]): Promise<Job[]> => {
+      for (let attempt = 0; attempt < MAX_CHUNK_RETRIES; attempt++) {
+        try {
+          const results = await ecosystemClient.multicall({
+            allowFailure: true,
+            contracts: chunk.map(ref => ({
+              address: CONTRACTS[ref.contractIdx].address,
+              abi: LEFTCLAW_ABI,
+              functionName: "getJob" as const,
+              args: [ref.id] as const,
+            })),
+          });
+          const jobs: Job[] = [];
+          for (let idx = 0; idx < results.length; idx++) {
+            const r = results[idx];
+            if (r.status === "success" && r.result) {
+              jobs.push(r.result as unknown as Job);
+            } else {
+              try {
+                const job = (await ecosystemClient.readContract({
+                  address: CONTRACTS[chunk[idx].contractIdx].address,
+                  abi: LEFTCLAW_ABI,
+                  functionName: "getJob",
+                  args: [chunk[idx].id],
+                })) as unknown as Job;
+                jobs.push(job);
+              } catch {
+                // skip
+              }
+            }
+          }
+          return jobs;
+        } catch {
+          await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+      return [];
+    };
+
+    (async () => {
+      try {
+        const jobs: Job[] = [];
+        for (let i = 0; i < allJobRefs.length; i += JOB_HYDRATE_CHUNK) {
+          if (cancelled) return;
+          jobs.push(...(await hydrateChunk(allJobRefs.slice(i, i + JOB_HYDRATE_CHUNK))));
+          apply(jobs); // progressive — Unique wallets appear after first chunk
+        }
+        if (!cancelled) setHydrateLoading(false);
+      } catch {
+        if (!cancelled) {
+          setStats(s => ({ ...s, ready: true }));
+          setHydrateLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [allJobRefs, totalJobsFromMeta]);
+
+  const stage1Failed =
+    Boolean(meta.isFetched) &&
+    Boolean(meta.data) &&
+    meta.data!.slice(0, CONTRACTS.length).every(r => r.status !== "success");
+
+  const fatalError =
+    (stage1Failed || meta.error) && stats.totalJobs === 0
+      ? meta.error || new Error("Failed to read job totals from LeftClaw contracts")
+      : null;
 
   return {
     ...stats,
     serviceTypes,
-    isLoading: meta.isLoading || idLists.isLoading || jobsBatch.isLoading,
-    error: meta.error || idLists.error || jobsBatch.error,
+    isLoading: meta.isLoading || idLists.isLoading || hydrateLoading,
+    error: fatalError,
   };
 }
