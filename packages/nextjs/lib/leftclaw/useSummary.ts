@@ -11,6 +11,13 @@ const inflight = new Map<string, Promise<string | null>>();
 const cacheKey = (job: EnrichedJob) => `${job.contractAddress}:${job.id.toString()}`;
 
 async function fetchJobSummary(job: EnrichedJob, serviceTypes: ServiceType[]): Promise<string | null> {
+  const fallback = (): string => {
+    const cleaned = (job.description || "").replace(/\s+/g, " ").trim();
+    if (!cleaned) return "LeftClaw job with no on-chain description.";
+    const sentence = cleaned.split(/(?<=[.!?])\s+/)[0] ?? cleaned;
+    return sentence.length > 180 ? `${sentence.slice(0, 180)}…` : sentence;
+  };
+
   try {
     const res = await fetch("/api/summary", {
       method: "POST",
@@ -23,11 +30,11 @@ async function fetchJobSummary(job: EnrichedJob, serviceTypes: ServiceType[]): P
         jobId: Number(job.id),
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return fallback();
     const data = (await res.json()) as { summary?: string };
-    return data.summary?.trim() || null;
+    return data.summary?.trim() || fallback();
   } catch {
-    return null;
+    return fallback();
   }
 }
 
