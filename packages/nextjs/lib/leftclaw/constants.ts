@@ -92,19 +92,8 @@ export const SERVICE_COLOR_BY_NAME: Record<string, { bg: string; text: string; r
 };
 
 /**
- * AI summary endpoint (Val.town).
- *
- * KNOWN ISSUE — as of the initial deploy this URL returns HTTP 404 on both
- * POST and GET. The dApp falls through to the truncated raw on-chain
- * description silently (see `useSummary.ts`), so cards still render — they
- * just don't show an AI summary.
- *
- * To restore the headline AI-summary feature without a code change, set
- * `NEXT_PUBLIC_VAL_TOWN_SUMMARY_URL` at build time to a working endpoint
- * with the same shape (POST `{description, serviceTypeId, workLogs, ...}`
- * returning a string body or `{summary: string}` JSON; GET fallback with
- * query-string params is also accepted). See `NEXT_STEPS.md` for the full
- * post-launch fix-it guide.
+ * Legacy Val.town summary URL — job/builder summaries now use `/api/summary`
+ * with `GEMINI_API_KEY` on the server (Vercel env). Kept for reference only.
  */
 const FALLBACK_SUMMARY_URL = "https://zeitgeistjones--2056e04848f711f1846542b51c65c3df.web.val.run";
 export const SUMMARY_API_URL =

@@ -7,6 +7,7 @@ import { base } from "viem/chains";
 import { formatAbsoluteDate, formatClawd } from "~~/lib/leftclaw/format";
 import { resolveServiceName, serviceBucket } from "~~/lib/leftclaw/serviceBucket";
 import type { EnrichedJob, ServiceType } from "~~/lib/leftclaw/types";
+import { useBuilderSummary } from "~~/lib/leftclaw/useBuilderSummary";
 import { notification } from "~~/utils/scaffold-eth";
 
 // Map a (case-insensitive) service-type name to a friendly characterization.
@@ -49,6 +50,7 @@ export const BuilderSummary = ({
 }) => {
   const [, copy] = useCopyToClipboard();
   const [copied, setCopied] = useState<"addr" | "share" | null>(null);
+  const { summary: aiSummary, loading: aiLoading, ref: aiRef } = useBuilderSummary(address, jobs, serviceTypes);
 
   const stats = useMemo(() => {
     const byTypeName: Record<string, number> = {};
@@ -149,8 +151,18 @@ export const BuilderSummary = ({
             <Stat label="In progress" value={stats.active.toString()} />
             <Stat label="CLAWD spent" value={formatClawd(stats.totalClawd)} />
           </div>
-          <div className="mt-5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-base-content/60">
-            <p className="my-0 italic">{characterization}</p>
+          <div className="mt-5 flex flex-col gap-2 text-xs text-base-content/60" ref={aiRef}>
+            {aiSummary ? (
+              <p className="my-0 text-sm leading-relaxed text-base-content/80">{aiSummary}</p>
+            ) : aiLoading ? (
+              <div className="space-y-2 my-0">
+                <div className="skeleton-line h-3 w-full" />
+                <div className="skeleton-line h-3 w-11/12" />
+                <div className="skeleton-line h-3 w-4/5" />
+              </div>
+            ) : (
+              <p className="my-0 italic">{characterization}</p>
+            )}
             <p className="my-0">
               Active <span className="text-base-content/80">{formatAbsoluteDate(stats.firstAt)}</span>
               {" → "}

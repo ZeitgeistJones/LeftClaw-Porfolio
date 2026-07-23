@@ -1,17 +1,22 @@
 "use client";
 
+import { useMemo } from "react";
 import { Address } from "@scaffold-ui/components";
 import { base } from "viem/chains";
-import type { WalletLeaderboardEntry } from "~~/lib/leftclaw/types";
+import { HIDDEN_SERVICE_TYPE_IDS } from "~~/lib/leftclaw/constants";
+import type { EnrichedJob, ServiceType, WalletLeaderboardEntry } from "~~/lib/leftclaw/types";
+import { useBuilderSummary } from "~~/lib/leftclaw/useBuilderSummary";
 
 type WalletLeaderboardProps = {
   wallets: WalletLeaderboardEntry[];
+  jobs: EnrichedJob[];
+  serviceTypes: ServiceType[];
   ready: boolean;
   error: Error | null;
   onExplore: (address: `0x${string}`) => void;
 };
 
-export const WalletLeaderboard = ({ wallets, ready, error, onExplore }: WalletLeaderboardProps) => {
+export const WalletLeaderboard = ({ wallets, jobs, serviceTypes, ready, error, onExplore }: WalletLeaderboardProps) => {
   if (error) {
     return (
       <section className="max-w-4xl mx-auto px-6 py-10">
@@ -43,24 +48,75 @@ export const WalletLeaderboard = ({ wallets, ready, error, onExplore }: WalletLe
       ) : (
         <ul className="divide-y divide-base-300/50 border border-base-300/60 rounded-xl overflow-hidden">
           {wallets.map((w, i) => (
-            <li key={w.address}>
-              <button
-                type="button"
-                onClick={() => onExplore(w.address)}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-base-100 hover:bg-base-200/60 transition-colors text-left"
-              >
-                <span className="w-7 text-xs font-mono text-base-content/40 tabular-nums shrink-0">{i + 1}</span>
-                <span className="min-w-0 flex-1 pointer-events-none">
-                  <Address address={w.address} chain={base} disableAddressLink onlyEnsOrAddress />
-                </span>
-                <span className="text-xs text-base-content/55 tabular-nums shrink-0">
-                  {w.jobCount} {w.jobCount === 1 ? "job" : "jobs"}
-                </span>
-              </button>
-            </li>
+            <BuilderRow
+              key={w.address}
+              rank={i + 1}
+              wallet={w}
+              jobs={jobs}
+              serviceTypes={serviceTypes}
+              onExplore={onExplore}
+            />
           ))}
         </ul>
       )}
     </section>
+  );
+};
+
+const BuilderRow = ({
+  rank,
+  wallet,
+  jobs,
+  serviceTypes,
+  onExplore,
+}: {
+  rank: number;
+  wallet: WalletLeaderboardEntry;
+  jobs: EnrichedJob[];
+  serviceTypes: ServiceType[];
+  onExplore: (address: `0x${string}`) => void;
+}) => {
+  const clientJobs = useMemo(
+    () =>
+      jobs.filter(
+        j =>
+          j.client.toLowerCase() === wallet.address.toLowerCase() &&
+          !HIDDEN_SERVICE_TYPE_IDS.has(Number(j.serviceTypeId)),
+      ),
+    [jobs, wallet.address],
+  );
+  const { summary, loading, ref } = useBuilderSummary(wallet.address, clientJobs, serviceTypes);
+
+  return (
+    <li>
+      <div ref={ref}>
+        <button
+          type="button"
+          onClick={() => onExplore(wallet.address)}
+          className="w-full px-4 py-3 bg-base-100 hover:bg-base-200/60 transition-colors text-left"
+        >
+          <div className="flex items-center gap-3">
+            <span className="w-7 text-xs font-mono text-base-content/40 tabular-nums shrink-0">{rank}</span>
+            <span className="min-w-0 flex-1 pointer-events-none">
+              <Address address={wallet.address} chain={base} disableAddressLink onlyEnsOrAddress />
+            </span>
+            <span className="text-xs text-base-content/55 tabular-nums shrink-0">
+              {wallet.jobCount} {wallet.jobCount === 1 ? "job" : "jobs"}
+            </span>
+          </div>
+          <div className="mt-2 pl-10 pr-1">
+            {summary ? (
+              <p className="my-0 text-xs leading-relaxed text-base-content/65">{summary}</p>
+            ) : loading ? (
+              <div className="space-y-1.5">
+                <div className="skeleton-line h-2.5 w-full" />
+                <div className="skeleton-line h-2.5 w-5/6" />
+                <div className="skeleton-line h-2.5 w-2/3" />
+              </div>
+            ) : null}
+          </div>
+        </button>
+      </div>
+    </li>
   );
 };

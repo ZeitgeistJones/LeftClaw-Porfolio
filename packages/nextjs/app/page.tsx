@@ -111,7 +111,14 @@ const HomeLanding = ({
         />
       ) : (
         <>
-          <WalletLeaderboard wallets={wallets} ready={ready} error={error} onExplore={onExplore} />
+          <WalletLeaderboard
+            wallets={wallets}
+            jobs={jobs}
+            serviceTypes={serviceTypes}
+            ready={ready}
+            error={error}
+            onExplore={onExplore}
+          />
           <HowItWorks />
         </>
       )}

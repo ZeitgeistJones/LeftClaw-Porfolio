@@ -33,7 +33,7 @@ export const JobCard = ({
   const [open, setOpen] = useState(false);
   const { workLogs } = useWorkLogs(job, open);
   const summaryWorkLogs = useMemo(() => (workLogs ? [...workLogs] : []), [workLogs]);
-  const { summary, loading: summaryLoading, ref: summaryRef } = useSummary(job, summaryWorkLogs);
+  const { summary, loading: summaryLoading, ref: summaryRef } = useSummary(job, summaryWorkLogs, serviceTypes);
 
   const isCancelled = job.status === 3 || job.status === 4;
   const isCompleted = job.status === 2;

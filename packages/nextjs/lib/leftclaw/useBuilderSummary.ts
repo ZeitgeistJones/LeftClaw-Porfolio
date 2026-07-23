@@ -2,25 +2,28 @@
 
 import { useEffect, useRef, useState } from "react";
 import { resolveServiceName } from "./serviceBucket";
-import type { EnrichedJob, ServiceType, WorkLog } from "./types";
+import type { EnrichedJob, ServiceType } from "./types";
 
-/** In-memory cache keyed by `contract:jobId` so re-renders don't refetch. */
 const summaryCache = new Map<string, string>();
 const inflight = new Map<string, Promise<string | null>>();
 
-const cacheKey = (job: EnrichedJob) => `${job.contractAddress}:${job.id.toString()}`;
-
-async function fetchJobSummary(job: EnrichedJob, serviceTypes: ServiceType[]): Promise<string | null> {
+async function fetchBuilderSummary(
+  address: string,
+  jobs: EnrichedJob[],
+  serviceTypes: ServiceType[],
+): Promise<string | null> {
   try {
     const res = await fetch("/api/summary", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        kind: "job",
-        description: job.description,
-        serviceTypeName: resolveServiceName(job.serviceTypeId, serviceTypes),
-        status: job.status,
-        jobId: Number(job.id),
+        kind: "builder",
+        address,
+        jobs: jobs.slice(0, 12).map(j => ({
+          serviceTypeName: resolveServiceName(j.serviceTypeId, serviceTypes),
+          description: j.description,
+          status: j.status,
+        })),
       }),
     });
     if (!res.ok) return null;
@@ -32,19 +35,20 @@ async function fetchJobSummary(job: EnrichedJob, serviceTypes: ServiceType[]): P
 }
 
 /**
- * Lazy 1-sentence AI summary for a job card (intersection observer + cache).
+ * Lazy 3-sentence AI summary for a builder wallet (intersection observer + cache).
  */
-export function useSummary(job: EnrichedJob, _workLogs: WorkLog[] | undefined, serviceTypes: ServiceType[] = []) {
-  const key = cacheKey(job);
+export function useBuilderSummary(address: `0x${string}`, jobs: EnrichedJob[], serviceTypes: ServiceType[]) {
+  const key = `builder:${address.toLowerCase()}:${jobs.length}`;
   const [summary, setSummary] = useState<string | null>(summaryCache.get(key) ?? null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
-  const serviceTypesRef = useRef(serviceTypes);
-  serviceTypesRef.current = serviceTypes;
+  const jobsRef = useRef(jobs);
+  const typesRef = useRef(serviceTypes);
+  jobsRef.current = jobs;
+  typesRef.current = serviceTypes;
 
   useEffect(() => {
-    if (summary) return;
+    if (summary || jobs.length === 0) return;
     const el = ref.current;
     if (!el) return;
 
@@ -62,26 +66,21 @@ export function useSummary(job: EnrichedJob, _workLogs: WorkLog[] | undefined, s
               if (!cancelled) setLoading(true);
               let p = inflight.get(key);
               if (!p) {
-                p = fetchJobSummary(job, serviceTypesRef.current);
+                p = fetchBuilderSummary(address, jobsRef.current, typesRef.current);
                 inflight.set(key, p);
               }
               const result = await p;
               if (result) summaryCache.set(key, result);
               inflight.delete(key);
               if (cancelled) return;
-              if (result) {
-                setSummary(result);
-                setError(false);
-              } else {
-                setError(true);
-              }
+              if (result) setSummary(result);
               setLoading(false);
             })();
             return;
           }
         }
       },
-      { rootMargin: "200px 0px" },
+      { rootMargin: "160px 0px" },
     );
 
     observer.observe(el);
@@ -89,7 +88,7 @@ export function useSummary(job: EnrichedJob, _workLogs: WorkLog[] | undefined, s
       cancelled = true;
       observer.disconnect();
     };
-  }, [job, key, summary]);
+  }, [address, key, jobs.length, summary]);
 
-  return { summary, loading, error, ref };
+  return { summary, loading, ref };
 }
