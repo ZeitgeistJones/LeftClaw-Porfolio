@@ -20,32 +20,36 @@ export const wagmiConfig = createConfig({
   ssr: true,
   client: ({ chain }) => {
     // Mainnet always gets the BuidlGuidl public RPC as a backstop for ENS /
-    // ETH-price lookups. Base also gets mainnet.base.org after Alchemy so a
-    // dead/rate-limited Alchemy key (403) does not freeze ecosystem reads.
+    // ETH-price lookups.
     const mainnetFallbackWithDefaultRPC = chain.id === mainnet.id ? [http("https://mainnet.rpc.buidlguidl.com")] : [];
 
     let rpcFallbacks: ReturnType<typeof http>[] = [...mainnetFallbackWithDefaultRPC];
 
-    const rpcOverrideUrl = (scaffoldConfig.rpcOverrides as ScaffoldConfig["rpcOverrides"])?.[chain.id];
-    if (rpcOverrideUrl) {
-      rpcFallbacks = [http(rpcOverrideUrl), ...rpcFallbacks];
-    } else {
-      const alchemyHttpUrl = getAlchemyHttpUrl(chain.id);
-      if (alchemyHttpUrl) {
-        const isUsingDefaultKey = scaffoldConfig.alchemyApiKey === DEFAULT_ALCHEMY_API_KEY;
-        rpcFallbacks = isUsingDefaultKey
-          ? [...rpcFallbacks, http(alchemyHttpUrl)]
-          : [http(alchemyHttpUrl), ...rpcFallbacks];
-      }
-    }
-
-    // Prefer public Base first when using the shared/default Alchemy key —
-    // that key returns 403 and only wastes latency before fallback.
+    // Base: always prefer the public RPC first so a dead/rate-limited Alchemy
+    // key (403) never freezes ecosystem stats. Alchemy is secondary only.
     if (chain.id === base.id) {
-      const isDefaultAlchemy = scaffoldConfig.alchemyApiKey === DEFAULT_ALCHEMY_API_KEY;
-      rpcFallbacks = isDefaultAlchemy
-        ? [http(BASE_PUBLIC_RPC), ...rpcFallbacks]
-        : [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
+      const secondary: ReturnType<typeof http>[] = [];
+      const rpcOverrideUrl = (scaffoldConfig.rpcOverrides as ScaffoldConfig["rpcOverrides"])?.[chain.id];
+      if (rpcOverrideUrl) {
+        secondary.push(http(rpcOverrideUrl));
+      } else {
+        const alchemyHttpUrl = getAlchemyHttpUrl(chain.id);
+        if (alchemyHttpUrl) secondary.push(http(alchemyHttpUrl));
+      }
+      rpcFallbacks = [http(BASE_PUBLIC_RPC), ...secondary];
+    } else {
+      const rpcOverrideUrl = (scaffoldConfig.rpcOverrides as ScaffoldConfig["rpcOverrides"])?.[chain.id];
+      if (rpcOverrideUrl) {
+        rpcFallbacks = [http(rpcOverrideUrl), ...rpcFallbacks];
+      } else {
+        const alchemyHttpUrl = getAlchemyHttpUrl(chain.id);
+        if (alchemyHttpUrl) {
+          const isUsingDefaultKey = scaffoldConfig.alchemyApiKey === DEFAULT_ALCHEMY_API_KEY;
+          rpcFallbacks = isUsingDefaultKey
+            ? [...rpcFallbacks, http(alchemyHttpUrl)]
+            : [http(alchemyHttpUrl), ...rpcFallbacks];
+        }
+      }
     }
 
     return createClient({

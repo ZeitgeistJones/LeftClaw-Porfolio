@@ -227,8 +227,10 @@ export function useEcosystem() {
 
         if (cancelled) return;
 
-        // Empty enumerate — keep previous good stats, don't paint zeros.
+        // Empty enumerate — mark ready via applyJobs so we don't wipe a richer
+        // prior hydrate; on first load this clears skeletons with zeros.
         if (refs.length === 0) {
+          applyJobs([], true);
           setHydrateLoading(false);
           return;
         }

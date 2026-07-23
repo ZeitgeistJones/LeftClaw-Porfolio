@@ -27,13 +27,8 @@ const scaffoldConfig = {
   // It's recommended to store it in an env variable:
   // .env.local for local testing, and in the Vercel/system env config for live apps.
   alchemyApiKey: ALCHEMY_API_KEY,
-  // If you want to use a different RPC for a specific network, you can add it here.
-  // The key is the chain ID, and the value is the HTTP RPC URL.
-  // Base is wired to Alchemy directly so the wagmi fallback chain prefers it
-  // over any public RPC.
-  rpcOverrides: {
-    [chains.base.id]: `https://base-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`,
-  },
+  // Optional per-chain RPC overrides. Leave Base unset — wagmiConfig prefers
+  // mainnet.base.org first, then Alchemy as a secondary hop.
   // This is ours WalletConnect's default project ID.
   // You can get your own at https://cloud.walletconnect.com
   // It's recommended to store it in an env variable:
