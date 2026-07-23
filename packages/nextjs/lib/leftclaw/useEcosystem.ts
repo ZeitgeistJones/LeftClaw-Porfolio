@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BASE_CHAIN_ID, CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
 import type { Job, ServiceType, WalletLeaderboardEntry } from "./types";
-import { getAddress } from "viem";
 import { usePublicClient, useReadContracts } from "wagmi";
 
 /** Keep chunks small — getJob returns full description strings. */
@@ -20,8 +19,9 @@ type JobRef = { contractIdx: number; id: bigint };
  *   - ranked client leaderboard (visible jobs only)
  *
  * Stage 1 (totals) is cheap and paints immediately. Stages 2–3 enumerate
- * every job ID then hydrate in tiny multicall chunks with retries so we
- * don't silently drop jobs when an RPC response is too large.
+ * every job ID then hydrate in tiny multicall chunks with retries.
+ * Individual status/chunk failures are skipped so one bad RPC call cannot
+ * blank the whole stats section.
  */
 export function useEcosystem() {
   const publicClient = usePublicClient({ chainId: BASE_CHAIN_ID });
@@ -118,7 +118,7 @@ export function useEcosystem() {
           if (activity > existing.lastActivity) existing.lastActivity = activity;
         } else {
           byClient.set(key, {
-            address: getAddress(job.client) as `0x${string}`,
+            address: job.client,
             jobCount: 1,
             lastActivity: activity,
           });
@@ -141,7 +141,6 @@ export function useEcosystem() {
     };
 
     const readStatusIds = async (address: `0x${string}`, status: number): Promise<readonly bigint[]> => {
-      let lastError: unknown;
       for (let attempt = 0; attempt < MAX_CHUNK_RETRIES; attempt++) {
         try {
           return (await publicClient.readContract({
@@ -150,16 +149,15 @@ export function useEcosystem() {
             functionName: "getJobsByStatus",
             args: [status],
           })) as readonly bigint[];
-        } catch (e) {
-          lastError = e;
-          await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
+        } catch {
+          await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         }
       }
-      throw lastError instanceof Error ? lastError : new Error(`getJobsByStatus(${status}) failed`);
+      // Don't abort the whole ecosystem for one status bucket (e.g. huge COMPLETED list).
+      return [];
     };
 
     const hydrateChunk = async (chunk: JobRef[]): Promise<Job[]> => {
-      let lastError: unknown;
       for (let attempt = 0; attempt < MAX_CHUNK_RETRIES; attempt++) {
         try {
           const results = await publicClient.multicall({
@@ -182,7 +180,6 @@ export function useEcosystem() {
             }
           });
 
-          // Retry failures one-by-one so one fat description can't sink the chunk.
           for (const ref of failed) {
             try {
               const job = (await publicClient.readContract({
@@ -193,26 +190,28 @@ export function useEcosystem() {
               })) as unknown as Job;
               jobs.push(job);
             } catch {
-              // leave missing — counted via hydratedJobs vs totalJobs
+              // skip this job
             }
           }
           return jobs;
-        } catch (e) {
-          lastError = e;
-          await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
+        } catch {
+          await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         }
       }
-      throw lastError instanceof Error ? lastError : new Error("Job hydration chunk failed");
+      // Chunk hard-failed — return empty and continue with remaining chunks.
+      return [];
     };
 
     (async () => {
       try {
         const refs: JobRef[] = [];
+        let statusReadsOk = 0;
         for (let cIdx = 0; cIdx < totalsByContract.length; cIdx++) {
           const address = totalsByContract[cIdx].address;
           for (let status = 0; status < 6; status++) {
             if (cancelled) return;
             const ids = await readStatusIds(address, status);
+            if (ids.length > 0) statusReadsOk += 1;
             for (const id of ids) refs.push({ contractIdx: cIdx, id });
           }
         }
@@ -222,6 +221,10 @@ export function useEcosystem() {
         if (refs.length === 0) {
           applyJobs([], true);
           setHydrateLoading(false);
+          // Only surface error if we expected jobs but got no IDs at all.
+          if (totalJobs > 0 && statusReadsOk === 0) {
+            setHydrateError(new Error("Failed to enumerate LeftClaw jobs"));
+          }
           return;
         }
 
@@ -230,7 +233,6 @@ export function useEcosystem() {
           if (cancelled) return;
           const chunkJobs = await hydrateChunk(refs.slice(i, i + JOB_HYDRATE_CHUNK));
           jobs.push(...chunkJobs);
-          // Paint after the first chunk; subsequent chunks climb the totals.
           applyJobs(jobs, true);
         }
 
@@ -239,6 +241,7 @@ export function useEcosystem() {
         setHydrateLoading(false);
       } catch (e) {
         if (!cancelled) {
+          // Keep any partial stats already painted; only blank the section if nothing loaded.
           setHydrateError(e instanceof Error ? e : new Error("Failed to load ecosystem jobs"));
           setHydrateLoading(false);
         }
@@ -250,12 +253,19 @@ export function useEcosystem() {
     };
   }, [totalsByContract, publicClient]);
 
-  const metaError = meta.error || (stage1Failed ? new Error("Failed to read job totals from LeftClaw contracts") : null);
+  // Don't let a stage-1 wagmi error wipe the UI if totals already painted.
+  // Only treat as fatal when we have no totalJobs and something failed hard.
+  const fatalError =
+    (stage1Failed || meta.error) && stats.totalJobs === 0
+      ? meta.error || new Error("Failed to read job totals from LeftClaw contracts")
+      : hydrateError && stats.hydratedJobs === 0 && stats.totalJobs === 0
+        ? hydrateError
+        : null;
 
   return {
     ...stats,
     serviceTypes,
     isLoading: meta.isLoading || hydrateLoading,
-    error: metaError || hydrateError,
+    error: fatalError,
   };
 }
