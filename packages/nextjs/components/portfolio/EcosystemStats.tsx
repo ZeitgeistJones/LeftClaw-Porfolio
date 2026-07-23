@@ -43,12 +43,14 @@ export const EcosystemStats = ({
             ready
               ? String(
                   Object.entries(serviceTypeCounts).reduce((acc, [id, n]) => {
+                    const numId = Number(id);
                     const name = (
-                      serviceTypes.find(s => Number(s.id) === Number(id))?.name ??
-                      DEFAULT_SERVICE_TYPES[Number(id)] ??
+                      serviceTypes.find(s => Number(s.id) === numId)?.name ??
+                      DEFAULT_SERVICE_TYPES[numId] ??
                       ""
                     ).toLowerCase();
-                    return name.includes("build") ? acc + n : acc;
+                    // Build + Feature (and any on-chain name containing those words).
+                    return name.includes("build") || name.includes("feature") ? acc + n : acc;
                   }, 0),
                 )
               : null
@@ -61,12 +63,16 @@ export const EcosystemStats = ({
             ready
               ? String(
                   Object.entries(serviceTypeCounts).reduce((acc, [id, n]) => {
+                    const numId = Number(id);
                     const name = (
-                      serviceTypes.find(s => Number(s.id) === Number(id))?.name ??
-                      DEFAULT_SERVICE_TYPES[Number(id)] ??
+                      serviceTypes.find(s => Number(s.id) === numId)?.name ??
+                      DEFAULT_SERVICE_TYPES[numId] ??
                       ""
                     ).toLowerCase();
-                    return name.includes("audit") ? acc + n : acc;
+                    // Contract/Frontend audits + HumanQA.
+                    return name.includes("audit") || name.includes("humanqa") || name.includes("qa")
+                      ? acc + n
+                      : acc;
                   }, 0),
                 )
               : null

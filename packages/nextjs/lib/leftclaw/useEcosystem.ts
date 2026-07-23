@@ -6,14 +6,11 @@ import type { Job, ServiceType, WalletLeaderboardEntry } from "./types";
 import { getAddress } from "viem";
 import { usePublicClient, useReadContracts } from "wagmi";
 
-/** Jobs per multicall — each getJob returns a full description string, so a
- *  single 500-call batch blows past public RPC response limits and silently
- *  drops most results (under-counting wallets / builds / audits). */
-const JOB_HYDRATE_CHUNK = 25;
+/** Keep chunks small — getJob returns full description strings. */
+const JOB_HYDRATE_CHUNK = 8;
+const MAX_CHUNK_RETRIES = 3;
 
 type JobRef = { contractIdx: number; id: bigint };
-
-const EMPTY_JOB_REFS: JobRef[] = [];
 
 /**
  * Aggregate ecosystem-wide stats:
@@ -22,8 +19,9 @@ const EMPTY_JOB_REFS: JobRef[] = [];
  *   - service-type counts
  *   - ranked client leaderboard (visible jobs only)
  *
- * Lazy: total job counts fetch first (cheap) and the heavy per-job hydration
- * is queued in chunks so the hero can render while stats fill in.
+ * Stage 1 (totals) is cheap and paints immediately. Stages 2–3 enumerate
+ * every job ID then hydrate in tiny multicall chunks with retries so we
+ * don't silently drop jobs when an RPC response is too large.
  */
 export function useEcosystem() {
   const publicClient = usePublicClient({ chainId: BASE_CHAIN_ID });
@@ -38,7 +36,7 @@ export function useEcosystem() {
         chainId: BASE_CHAIN_ID,
       })),
       {
-        address: CONTRACTS[0].address, // service types live on V2 (current)
+        address: CONTRACTS[0].address,
         abi: LEFTCLAW_ABI,
         functionName: "getAllServiceTypes" as const,
         chainId: BASE_CHAIN_ID,
@@ -73,45 +71,12 @@ export function useEcosystem() {
     return r.result as unknown as ServiceType[];
   }, [meta.data]);
 
-  // Stage 2: enumerate real job IDs via getJobsByStatus (V2 IDs don't start at 1).
-  const idLists = useReadContracts({
-    contracts: totalsByContract
-      ? totalsByContract.flatMap(t =>
-          [0, 1, 2, 3, 4, 5].map(status => ({
-            address: t.address,
-            abi: LEFTCLAW_ABI,
-            functionName: "getJobsByStatus" as const,
-            args: [status] as const,
-            chainId: BASE_CHAIN_ID,
-          })),
-        )
-      : [],
-    query: { enabled: Boolean(totalsByContract), staleTime: 5 * 60_000 },
-  });
-
-  const allJobRefs = useMemo(() => {
-    if (!idLists.data || !totalsByContract) return EMPTY_JOB_REFS;
-    const refs: JobRef[] = [];
-    let i = 0;
-    for (let cIdx = 0; cIdx < totalsByContract.length; cIdx++) {
-      for (let s = 0; s < 6; s++) {
-        const r = idLists.data[i++];
-        if (r?.status === "success") {
-          for (const id of r.result as readonly bigint[]) {
-            refs.push({ contractIdx: cIdx, id });
-          }
-        }
-      }
-    }
-    return refs;
-  }, [idLists.data, totalsByContract]);
-
-  // Show whatever we have so far; the UI shimmers until counts land.
   const [stats, setStats] = useState({
     totalJobs: 0,
     uniqueWallets: 0,
     serviceTypeCounts: {} as Record<number, number>,
     wallets: [] as WalletLeaderboardEntry[],
+    hydratedJobs: 0,
     ready: false,
   });
   const [hydrateLoading, setHydrateLoading] = useState(false);
@@ -124,63 +89,16 @@ export function useEcosystem() {
     setStats(s => ({ ...s, totalJobs }));
   }, [totalsByContract]);
 
-  // Stage 3: hydrate jobs in small multicall chunks (descriptions are large).
+  // Stages 2–3: enumerate IDs per-status (with retry), then hydrate in chunks.
   useEffect(() => {
-    if (!totalsByContract) return;
+    if (!totalsByContract || !publicClient) return;
     const totalJobs = totalsByContract.reduce((acc, t) => acc + t.total, 0);
-
-    if (!idLists.isFetched) return;
-
-    if (allJobRefs.length === 0) {
-      setStats({
-        totalJobs,
-        uniqueWallets: 0,
-        serviceTypeCounts: {},
-        wallets: [],
-        ready: true,
-      });
-      setHydrateLoading(false);
-      setHydrateError(null);
-      return;
-    }
-
-    if (!publicClient) return;
 
     let cancelled = false;
     setHydrateLoading(true);
     setHydrateError(null);
 
-    (async () => {
-      const jobs: Job[] = [];
-      try {
-        for (let i = 0; i < allJobRefs.length; i += JOB_HYDRATE_CHUNK) {
-          if (cancelled) return;
-          const chunk = allJobRefs.slice(i, i + JOB_HYDRATE_CHUNK);
-          const results = await publicClient.multicall({
-            allowFailure: true,
-            contracts: chunk.map(ref => ({
-              address: CONTRACTS[ref.contractIdx].address,
-              abi: LEFTCLAW_ABI,
-              functionName: "getJob" as const,
-              args: [ref.id] as const,
-            })),
-          });
-          for (const r of results) {
-            if (r.status === "success" && r.result) {
-              jobs.push(r.result as unknown as Job);
-            }
-          }
-        }
-      } catch (e) {
-        if (!cancelled) {
-          setHydrateError(e instanceof Error ? e : new Error("Failed to hydrate jobs"));
-          setHydrateLoading(false);
-        }
-        return;
-      }
-
-      if (cancelled) return;
-
+    const applyJobs = (jobs: Job[], ready: boolean) => {
       const wallets = new Set<string>();
       const counts: Record<number, number> = {};
       const byClient = new Map<string, WalletLeaderboardEntry>();
@@ -217,22 +135,127 @@ export function useEcosystem() {
         uniqueWallets: wallets.size,
         serviceTypeCounts: counts,
         wallets: ranked,
-        ready: true,
+        hydratedJobs: jobs.length,
+        ready,
       });
-      setHydrateLoading(false);
+    };
+
+    const readStatusIds = async (address: `0x${string}`, status: number): Promise<readonly bigint[]> => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < MAX_CHUNK_RETRIES; attempt++) {
+        try {
+          return (await publicClient.readContract({
+            address,
+            abi: LEFTCLAW_ABI,
+            functionName: "getJobsByStatus",
+            args: [status],
+          })) as readonly bigint[];
+        } catch (e) {
+          lastError = e;
+          await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(`getJobsByStatus(${status}) failed`);
+    };
+
+    const hydrateChunk = async (chunk: JobRef[]): Promise<Job[]> => {
+      let lastError: unknown;
+      for (let attempt = 0; attempt < MAX_CHUNK_RETRIES; attempt++) {
+        try {
+          const results = await publicClient.multicall({
+            allowFailure: true,
+            contracts: chunk.map(ref => ({
+              address: CONTRACTS[ref.contractIdx].address,
+              abi: LEFTCLAW_ABI,
+              functionName: "getJob" as const,
+              args: [ref.id] as const,
+            })),
+          });
+
+          const jobs: Job[] = [];
+          const failed: JobRef[] = [];
+          results.forEach((r, idx) => {
+            if (r.status === "success" && r.result) {
+              jobs.push(r.result as unknown as Job);
+            } else {
+              failed.push(chunk[idx]);
+            }
+          });
+
+          // Retry failures one-by-one so one fat description can't sink the chunk.
+          for (const ref of failed) {
+            try {
+              const job = (await publicClient.readContract({
+                address: CONTRACTS[ref.contractIdx].address,
+                abi: LEFTCLAW_ABI,
+                functionName: "getJob",
+                args: [ref.id],
+              })) as unknown as Job;
+              jobs.push(job);
+            } catch {
+              // leave missing — counted via hydratedJobs vs totalJobs
+            }
+          }
+          return jobs;
+        } catch (e) {
+          lastError = e;
+          await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("Job hydration chunk failed");
+    };
+
+    (async () => {
+      try {
+        const refs: JobRef[] = [];
+        for (let cIdx = 0; cIdx < totalsByContract.length; cIdx++) {
+          const address = totalsByContract[cIdx].address;
+          for (let status = 0; status < 6; status++) {
+            if (cancelled) return;
+            const ids = await readStatusIds(address, status);
+            for (const id of ids) refs.push({ contractIdx: cIdx, id });
+          }
+        }
+
+        if (cancelled) return;
+
+        if (refs.length === 0) {
+          applyJobs([], true);
+          setHydrateLoading(false);
+          return;
+        }
+
+        const jobs: Job[] = [];
+        for (let i = 0; i < refs.length; i += JOB_HYDRATE_CHUNK) {
+          if (cancelled) return;
+          const chunkJobs = await hydrateChunk(refs.slice(i, i + JOB_HYDRATE_CHUNK));
+          jobs.push(...chunkJobs);
+          // Paint after the first chunk; subsequent chunks climb the totals.
+          applyJobs(jobs, true);
+        }
+
+        if (cancelled) return;
+        applyJobs(jobs, true);
+        setHydrateLoading(false);
+      } catch (e) {
+        if (!cancelled) {
+          setHydrateError(e instanceof Error ? e : new Error("Failed to load ecosystem jobs"));
+          setHydrateLoading(false);
+        }
+      }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [totalsByContract, idLists.isFetched, allJobRefs, publicClient]);
+  }, [totalsByContract, publicClient]);
 
   const metaError = meta.error || (stage1Failed ? new Error("Failed to read job totals from LeftClaw contracts") : null);
 
   return {
     ...stats,
     serviceTypes,
-    isLoading: meta.isLoading || idLists.isLoading || hydrateLoading,
-    error: metaError || idLists.error || hydrateError,
+    isLoading: meta.isLoading || hydrateLoading,
+    error: metaError || hydrateError,
   };
 }
