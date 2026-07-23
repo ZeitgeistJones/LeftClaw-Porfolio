@@ -39,10 +39,13 @@ export const wagmiConfig = createConfig({
       }
     }
 
-    // Public Base backstop — shared Alchemy keys often 403; without this,
-    // ecosystem stats stay on skeletons forever.
+    // Prefer public Base first when using the shared/default Alchemy key —
+    // that key returns 403 and only wastes latency before fallback.
     if (chain.id === base.id) {
-      rpcFallbacks = [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
+      const isDefaultAlchemy = scaffoldConfig.alchemyApiKey === DEFAULT_ALCHEMY_API_KEY;
+      rpcFallbacks = isDefaultAlchemy
+        ? [http(BASE_PUBLIC_RPC), ...rpcFallbacks]
+        : [...rpcFallbacks, http(BASE_PUBLIC_RPC)];
     }
 
     return createClient({

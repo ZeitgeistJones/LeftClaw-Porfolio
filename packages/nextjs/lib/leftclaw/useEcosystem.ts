@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BASE_CHAIN_ID, CONTRACTS, HIDDEN_SERVICE_TYPE_IDS, LEFTCLAW_ABI } from "./constants";
 import type { Job, ServiceType, WalletLeaderboardEntry } from "./types";
 import { usePublicClient, useReadContracts } from "wagmi";
@@ -11,22 +11,26 @@ const MAX_CHUNK_RETRIES = 3;
 
 type JobRef = { contractIdx: number; id: bigint };
 
+type EcosystemStatsState = {
+  totalJobs: number;
+  uniqueWallets: number;
+  serviceTypeCounts: Record<number, number>;
+  wallets: WalletLeaderboardEntry[];
+  hydratedJobs: number;
+  ready: boolean;
+};
+
 /**
- * Aggregate ecosystem-wide stats:
- *   - total jobs across V1 + V2
- *   - unique client wallets
- *   - service-type counts
- *   - ranked client leaderboard (visible jobs only)
+ * Aggregate ecosystem-wide stats from LeftClaw V1 + V2.
  *
- * Stage 1 (totals) is cheap and paints immediately. Stages 2–3 enumerate
- * every job ID then hydrate in tiny multicall chunks with retries.
- * Individual status/chunk failures are skipped so one bad RPC call cannot
- * blank the whole stats section.
+ * No Vercel env required — Base RPC falls back to mainnet.base.org when the
+ * shared Alchemy key is dead. Stage 1 paints job totals immediately; stages
+ * 2–3 hydrate in small chunks. A failed re-fetch never overwrites good stats
+ * with zeros.
  */
 export function useEcosystem() {
   const publicClient = usePublicClient({ chainId: BASE_CHAIN_ID });
 
-  // Stage 1: getTotalJobs on each contract + getAllServiceTypes.
   const meta = useReadContracts({
     contracts: [
       ...CONTRACTS.map(c => ({
@@ -58,6 +62,11 @@ export function useEcosystem() {
     });
   }, [meta.data]);
 
+  const totalJobsFromMeta = useMemo(
+    () => (totalsByContract ? totalsByContract.reduce((acc, t) => acc + t.total, 0) : 0),
+    [totalsByContract],
+  );
+
   const stage1Failed =
     Boolean(meta.isFetched) &&
     Boolean(meta.data) &&
@@ -71,34 +80,38 @@ export function useEcosystem() {
     return r.result as unknown as ServiceType[];
   }, [meta.data]);
 
-  const [stats, setStats] = useState({
+  const [stats, setStats] = useState<EcosystemStatsState>({
     totalJobs: 0,
     uniqueWallets: 0,
-    serviceTypeCounts: {} as Record<number, number>,
-    wallets: [] as WalletLeaderboardEntry[],
+    serviceTypeCounts: {},
+    wallets: [],
     hydratedJobs: 0,
     ready: false,
   });
   const [hydrateLoading, setHydrateLoading] = useState(false);
-  const [hydrateError, setHydrateError] = useState<Error | null>(null);
 
-  // Stage 1 total as soon as it lands.
-  useEffect(() => {
-    if (!totalsByContract) return;
-    const totalJobs = totalsByContract.reduce((acc, t) => acc + t.total, 0);
-    setStats(s => ({ ...s, totalJobs }));
-  }, [totalsByContract]);
+  // Keep latest good hydrate so a flaky re-run cannot wipe the UI to zeros.
+  const bestHydratedRef = useRef({ jobs: [] as Job[], totalJobs: 0 });
 
-  // Stages 2–3: enumerate IDs per-status (with retry), then hydrate in chunks.
   useEffect(() => {
-    if (!totalsByContract || !publicClient) return;
-    const totalJobs = totalsByContract.reduce((acc, t) => acc + t.total, 0);
+    if (totalJobsFromMeta <= 0) return;
+    setStats(s => ({ ...s, totalJobs: totalJobsFromMeta }));
+  }, [totalJobsFromMeta]);
+
+  useEffect(() => {
+    if (!totalsByContract || !publicClient || totalJobsFromMeta <= 0) return;
 
     let cancelled = false;
     setHydrateLoading(true);
-    setHydrateError(null);
 
     const applyJobs = (jobs: Job[], ready: boolean) => {
+      // Never replace a richer result with a poorer one (empty re-fetch / cancel race).
+      if (jobs.length < bestHydratedRef.current.jobs.length) {
+        if (ready) setHydrateLoading(false);
+        return;
+      }
+      bestHydratedRef.current = { jobs, totalJobs: totalJobsFromMeta };
+
       const wallets = new Set<string>();
       const counts: Record<number, number> = {};
       const byClient = new Map<string, WalletLeaderboardEntry>();
@@ -131,7 +144,7 @@ export function useEcosystem() {
       });
 
       setStats({
-        totalJobs,
+        totalJobs: totalJobsFromMeta,
         uniqueWallets: wallets.size,
         serviceTypeCounts: counts,
         wallets: ranked,
@@ -153,7 +166,6 @@ export function useEcosystem() {
           await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         }
       }
-      // Don't abort the whole ecosystem for one status bucket (e.g. huge COMPLETED list).
       return [];
     };
 
@@ -190,7 +202,7 @@ export function useEcosystem() {
               })) as unknown as Job;
               jobs.push(job);
             } catch {
-              // skip this job
+              // skip
             }
           }
           return jobs;
@@ -198,33 +210,26 @@ export function useEcosystem() {
           await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
         }
       }
-      // Chunk hard-failed — return empty and continue with remaining chunks.
       return [];
     };
 
     (async () => {
       try {
         const refs: JobRef[] = [];
-        let statusReadsOk = 0;
         for (let cIdx = 0; cIdx < totalsByContract.length; cIdx++) {
           const address = totalsByContract[cIdx].address;
           for (let status = 0; status < 6; status++) {
             if (cancelled) return;
             const ids = await readStatusIds(address, status);
-            if (ids.length > 0) statusReadsOk += 1;
             for (const id of ids) refs.push({ contractIdx: cIdx, id });
           }
         }
 
         if (cancelled) return;
 
+        // Empty enumerate — keep previous good stats, don't paint zeros.
         if (refs.length === 0) {
-          applyJobs([], true);
           setHydrateLoading(false);
-          // Only surface error if we expected jobs but got no IDs at all.
-          if (totalJobs > 0 && statusReadsOk === 0) {
-            setHydrateError(new Error("Failed to enumerate LeftClaw jobs"));
-          }
           return;
         }
 
@@ -239,28 +244,21 @@ export function useEcosystem() {
         if (cancelled) return;
         applyJobs(jobs, true);
         setHydrateLoading(false);
-      } catch (e) {
-        if (!cancelled) {
-          // Keep any partial stats already painted; only blank the section if nothing loaded.
-          setHydrateError(e instanceof Error ? e : new Error("Failed to load ecosystem jobs"));
-          setHydrateLoading(false);
-        }
+      } catch {
+        if (!cancelled) setHydrateLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [totalsByContract, publicClient]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- publicClient identity churns; totals gate the run
+  }, [totalJobsFromMeta, Boolean(publicClient)]);
 
-  // Don't let a stage-1 wagmi error wipe the UI if totals already painted.
-  // Only treat as fatal when we have no totalJobs and something failed hard.
   const fatalError =
     (stage1Failed || meta.error) && stats.totalJobs === 0
       ? meta.error || new Error("Failed to read job totals from LeftClaw contracts")
-      : hydrateError && stats.hydratedJobs === 0 && stats.totalJobs === 0
-        ? hydrateError
-        : null;
+      : null;
 
   return {
     ...stats,
