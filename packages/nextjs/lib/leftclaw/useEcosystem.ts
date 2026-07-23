@@ -67,6 +67,16 @@ function buildStats(jobs: Job[], totalJobs: number) {
   };
 }
 
+// #region agent log
+const dbg = (hypothesisId: string, location: string, message: string, data: Record<string, unknown>) => {
+  fetch("http://127.0.0.1:7786/ingest/a981d688-326c-4485-bb4e-b67c1376a15d", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "00da27" },
+    body: JSON.stringify({ sessionId: "00da27", hypothesisId, location, message, data, timestamp: Date.now(), runId: "pre-fix" }),
+  }).catch(() => {});
+};
+// #endregion
+
 export function useEcosystem() {
   // Stage 1 — same as Job #102
   const meta = useReadContracts({
@@ -159,13 +169,33 @@ export function useEcosystem() {
   // Paint Jobs shipped as soon as totals land (Job #102 behavior).
   useEffect(() => {
     if (totalJobsFromMeta <= 0) return;
+    // #region agent log
+    dbg("A", "useEcosystem.ts:totals", "stage1 totals painted", {
+      totalJobsFromMeta,
+      metaStatus: meta.data?.slice(0, 2).map(r => r?.status),
+      metaError: meta.error?.message ?? null,
+    });
+    // #endregion
     setStats(s => ({ ...s, totalJobs: totalJobsFromMeta }));
-  }, [totalJobsFromMeta]);
+  }, [totalJobsFromMeta, meta.data, meta.error]);
 
   // Status lists done but empty → stop skeletons.
   useEffect(() => {
     if (!idLists.isFetched || totalJobsFromMeta <= 0) return;
     if (allJobRefs.length > 0) return;
+    // #region agent log
+    const statusSummary =
+      idLists.data?.map((r, i) => ({ i, status: r?.status, len: r?.status === "success" ? (r.result as readonly bigint[])?.length : 0 })) ??
+      [];
+    dbg("A", "useEcosystem.ts:empty-refs", "stage2 empty refs → ready zeros", {
+      totalJobsFromMeta,
+      idListsFetched: idLists.isFetched,
+      idListsError: idLists.error?.message ?? null,
+      idListsLoading: idLists.isLoading,
+      statusSummary,
+      allJobRefsLen: allJobRefs.length,
+    });
+    // #endregion
     setStats(s => ({
       ...s,
       totalJobs: totalJobsFromMeta,
@@ -174,23 +204,47 @@ export function useEcosystem() {
       wallets: [],
       ready: true,
     }));
-  }, [idLists.isFetched, allJobRefs.length, totalJobsFromMeta]);
+  }, [idLists.isFetched, idLists.data, idLists.error, idLists.isLoading, allJobRefs.length, totalJobsFromMeta]);
 
   // Stage 3 — chunked getJob (Job #102 did one shot; we have ~5x more jobs now).
   useEffect(() => {
     if (allJobRefs.length === 0 || totalJobsFromMeta <= 0) return;
 
     const runKey = `${totalJobsFromMeta}:${allJobRefs.length}`;
-    if (runKeyRef.current === runKey && bestCountRef.current > 0) return;
+    if (runKeyRef.current === runKey && bestCountRef.current > 0) {
+      // #region agent log
+      dbg("C", "useEcosystem.ts:hydrate-skip", "hydrate skipped (already have best)", {
+        runKey,
+        bestCount: bestCountRef.current,
+      });
+      // #endregion
+      return;
+    }
     runKeyRef.current = runKey;
 
     let cancelled = false;
     setHydrateLoading(true);
+    // #region agent log
+    dbg("B", "useEcosystem.ts:hydrate-start", "stage3 hydrate starting", {
+      runKey,
+      refs: allJobRefs.length,
+      firstIds: allJobRefs.slice(0, 3).map(r => String(r.id)),
+    });
+    // #endregion
 
     const apply = (jobs: Job[]) => {
       if (jobs.length < bestCountRef.current) return;
       bestCountRef.current = jobs.length;
-      setStats({ ...buildStats(jobs, totalJobsFromMeta), ready: true });
+      const next = buildStats(jobs, totalJobsFromMeta);
+      // #region agent log
+      dbg("D", "useEcosystem.ts:apply", "apply stats", {
+        jobsLen: jobs.length,
+        uniqueWallets: next.uniqueWallets,
+        serviceTypeKeys: Object.keys(next.serviceTypeCounts).length,
+        leaderboard: next.wallets.length,
+      });
+      // #endregion
+      setStats({ ...next, ready: true });
     };
 
     const hydrateChunk = async (chunk: JobRef[]): Promise<Job[]> => {
@@ -206,10 +260,13 @@ export function useEcosystem() {
             })),
           });
           const jobs: Job[] = [];
+          let multicallOk = 0;
+          let fallbackOk = 0;
           for (let idx = 0; idx < results.length; idx++) {
             const r = results[idx];
             if (r.status === "success" && r.result) {
               jobs.push(r.result as unknown as Job);
+              multicallOk++;
             } else {
               try {
                 const job = (await ecosystemClient.readContract({
@@ -219,13 +276,34 @@ export function useEcosystem() {
                   args: [chunk[idx].id],
                 })) as unknown as Job;
                 jobs.push(job);
+                fallbackOk++;
               } catch {
                 // skip
               }
             }
           }
+          // #region agent log
+          if (attempt === 0 || jobs.length === 0) {
+            dbg("B", "useEcosystem.ts:hydrate-chunk", "chunk result", {
+              attempt,
+              chunkLen: chunk.length,
+              jobsLen: jobs.length,
+              multicallOk,
+              fallbackOk,
+              firstFail: results.find(r => r.status !== "success")
+                ? String((results.find(r => r.status !== "success") as { error?: Error })?.error?.message ?? results.find(r => r.status !== "success")?.status)
+                : null,
+            });
+          }
+          // #endregion
           return jobs;
-        } catch {
+        } catch (e) {
+          // #region agent log
+          dbg("B", "useEcosystem.ts:hydrate-chunk-err", "chunk threw", {
+            attempt,
+            err: e instanceof Error ? e.message : String(e),
+          });
+          // #endregion
           await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
         }
       }
@@ -236,12 +314,32 @@ export function useEcosystem() {
       try {
         const jobs: Job[] = [];
         for (let i = 0; i < allJobRefs.length; i += JOB_HYDRATE_CHUNK) {
-          if (cancelled) return;
+          if (cancelled) {
+            // #region agent log
+            dbg("C", "useEcosystem.ts:hydrate-cancel", "cancelled mid-hydrate", {
+              jobsSoFar: jobs.length,
+              atIndex: i,
+            });
+            // #endregion
+            return;
+          }
           jobs.push(...(await hydrateChunk(allJobRefs.slice(i, i + JOB_HYDRATE_CHUNK))));
           apply(jobs); // progressive — Unique wallets appear after first chunk
         }
+        // #region agent log
+        dbg("E", "useEcosystem.ts:hydrate-done", "hydrate finished", {
+          jobsLen: jobs.length,
+          cancelled,
+          bestCount: bestCountRef.current,
+        });
+        // #endregion
         if (!cancelled) setHydrateLoading(false);
-      } catch {
+      } catch (e) {
+        // #region agent log
+        dbg("E", "useEcosystem.ts:hydrate-fatal", "hydrate fatal", {
+          err: e instanceof Error ? e.message : String(e),
+        });
+        // #endregion
         if (!cancelled) {
           setStats(s => ({ ...s, ready: true }));
           setHydrateLoading(false);
